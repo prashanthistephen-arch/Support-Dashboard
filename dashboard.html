@@ -124,7 +124,8 @@ const SHEETS = {
 };
 
 // ── STATE ────────────────────────────────────────────────────────────────────
-let allRows = [];
+let sheets = {};  // raw sheet data, keyed by sheet name
+let allRows = []; // incoming rows (for filters/dropdowns)
 let charts  = {};
 
 // ── INIT ─────────────────────────────────────────────────────────────────────
@@ -143,10 +144,10 @@ function clearFilters() {
   ['from-date','to-date'].forEach(id => document.getElementById(id).value = '');
   ['f-module','f-geography','f-contract','f-account','f-severity','f-agent','f-manager']
     .forEach(id => document.getElementById(id).value = '');
-  render(allRows);
+  render();
 }
 
-function applyFilters() { render(filter(allRows)); }
+function applyFilters() { render(); }
 
 // ── FETCH via Sheets API ──────────────────────────────────────────────────────
 async function fetchSheet(name) {
@@ -177,58 +178,30 @@ async function loadData() {
       fetchSheet(SHEETS.pcv)
     ]);
 
-    const idx = arr => arr.reduce((m, r) => { m[String(r['ID']||'').trim()] = r; return m; }, {});
-    const resIdx  = idx(resolved);
-    const irtIdx  = idx(irtSla);
-    const csatIdx = idx(csat);
-    const cesIdx  = idx(ces);
-    const reopenIds     = new Set(reopen.map(r => String(r['ID']||'').trim()));
-    const escalationIds = new Set(escalation.map(r => String(r['ID']||'').trim()));
-    const pcvIds        = new Set(pcv.map(r => String(r['ID']||'').trim()));
+    // Normalise dates in each sheet
+    const norm = (arr, dateCol='Date') => arr.map(r => ({...r, _date: fmtDate(r[dateCol])}));
+    sheets = {
+      incoming:   norm(incoming),
+      resolved:   norm(resolved),
+      reopen:     norm(reopen),
+      escalation: norm(escalation),
+      csat:       norm(csat),
+      ces:        norm(ces),
+      irtSla:     norm(irtSla),
+      pcv:        norm(pcv)
+    };
 
-    allRows = incoming.map(row => {
-      const id      = String(row['ID']||'').trim();
-      const resRow  = resIdx[id]  || {};
-      const irtRow  = irtIdx[id]  || {};
-      const csatRow = csatIdx[id] || {};
-      const cesRow  = cesIdx[id]  || {};
-      return {
-        id,
-        date:                     fmtDate(row['Date']),
-        module:                   row['Module']                            || '',
-        company_geography:        row['Company Geography']                 || '',
-        company_contract_type:    row['Company Contract Type']             || '',
-        account_name:             row['Company Name']                      || '',
-        severity:                 row['Severity']                          || '',
-        agent_name:               row['Agent Name']                        || '',
-        manager_name:             row['Agent Reporting Manager in Namely'] || '',
-        is_resolved:              !!resRow['ID'],
-        is_reopened:              reopenIds.has(id),
-        is_escalated:             escalationIds.has(id),
-        csat_score:               toNum(csatRow['Question Score']),
-        csat_date:                fmtDate(csatRow['Date']),
-        ces_score:                toNum(cesRow['Question Score']),
-        ces_date:                 fmtDate(cesRow['Date']),
-        is_1bdr:                  resRow['1 BDR'] || null,
-        resolution_sla_met:       resRow['Resolution Status'] === 'Within SLA',
-        resolution_time:          toNum(resRow['Resolution Time in Bhrs(Hours)']),
-        resolved_date:            fmtDate(resRow['Date']),
-        has_irt:                  !!irtRow['ID'],
-        initial_response_time:    toNum(irtRow['First Response Time in Bhrs(Hours)']),
-        initial_response_sla_met: irtRow['First Response Status'] === 'Within SLA',
-        irt_date:                 fmtDate(irtRow['Date']),
-        is_pcv:                   pcvIds.has(id)
-      };
-    });
-
+    allRows = sheets.incoming; // used for filter dropdowns only
     populateDropdowns(allRows);
-    render(filter(allRows));
-    setStatus(`${allRows.length} rows loaded · ${new Date().toLocaleTimeString()}`);
+    render();
+    setStatus(`Loaded: ${incoming.length} incoming · ${resolved.length} resolved · ${new Date().toLocaleTimeString()}`);
   } catch (e) {
     setStatus('⚠ ' + e.message + ' — using sample data');
-    allRows = sampleData();
+    const s = sampleSheets();
+    sheets = s;
+    allRows = s.incoming;
     populateDropdowns(allRows);
-    render(filter(allRows));
+    render();
   }
 }
 
@@ -260,55 +233,97 @@ function populateDropdowns(rows) {
 }
 
 // ── FILTER ───────────────────────────────────────────────────────────────────
-function filter(rows) {
-  const from=document.getElementById('from-date').value, to=document.getElementById('to-date').value;
-  const module=document.getElementById('f-module').value, geo=document.getElementById('f-geography').value;
-  const contract=document.getElementById('f-contract').value, account=document.getElementById('f-account').value;
-  const severity=document.getElementById('f-severity').value, agent=document.getElementById('f-agent').value;
-  const manager=document.getElementById('f-manager').value;
-  return rows.filter(r =>
-    (!from||r.date>=from)&&(!to||r.date<=to)&&(!module||r.module===module)&&
-    (!geo||r.company_geography===geo)&&(!contract||r.company_contract_type===contract)&&
-    (!account||r.account_name===account)&&(!severity||r.severity===severity)&&
-    (!agent||r.agent_name===agent)&&(!manager||r.manager_name===manager)
+function getFilters() {
+  return {
+    from:     document.getElementById('from-date').value,
+    to:       document.getElementById('to-date').value,
+    module:   document.getElementById('f-module').value,
+    geo:      document.getElementById('f-geography').value,
+    contract: document.getElementById('f-contract').value,
+    account:  document.getElementById('f-account').value,
+    severity: document.getElementById('f-severity').value,
+    agent:    document.getElementById('f-agent').value,
+    manager:  document.getElementById('f-manager').value
+  };
+}
+
+function filterSheet(arr, f, dateCol='_date') {
+  return arr.filter(r =>
+    (!f.from     || r[dateCol] >= f.from) &&
+    (!f.to       || r[dateCol] <= f.to) &&
+    (!f.module   || r['Module'] === f.module) &&
+    (!f.geo      || r['Company Geography'] === f.geo) &&
+    (!f.contract || r['Company Contract Type'] === f.contract) &&
+    (!f.account  || r['Company Name'] === f.account) &&
+    (!f.severity || r['Severity'] === f.severity) &&
+    (!f.agent    || r['Agent Name'] === f.agent) &&
+    (!f.manager  || r['Agent Reporting Manager in Namely'] === f.manager)
   );
 }
 
+// Dimension filters only exist in Incoming — filter other sheets by date + matching IDs from Incoming
+function filterById(arr, ids, f, dateCol='_date') {
+  return arr.filter(r =>
+    (!ids || ids.has(String(r['ID']||'').trim())) &&
+    (!f.from || r[dateCol] >= f.from) &&
+    (!f.to   || r[dateCol] <= f.to)
+  );
+}
+
+function filter(rows) { // kept for dropdown population compatibility
+  const f = getFilters();
+  return filterSheet(rows, f);
+}
+
+function applyFilters() { render(); }
+
 // ── RENDER ────────────────────────────────────────────────────────────────────
-function render(rows) {
-  const n = rows.length;
-  const from = document.getElementById('from-date').value;
-  const to   = document.getElementById('to-date').value;
-  const inDate = d => (!from || d >= from) && (!to || d <= to);
+function render() {
+  const f = getFilters();
 
-  set('k-created',  n);
-  set('k-resolved', count(rows, r => r.is_resolved && inDate(r.resolved_date)));
-  set('k-open',     count(rows, r => !r.is_resolved && !r.is_reopened && !r.is_escalated));
-  set('k-reopened', count(rows, r => r.is_reopened));
-  set('k-escalated',count(rows, r => r.is_escalated));
+  // Incoming filtered by all dimensions + date
+  const inc = filterSheet(sheets.incoming, f);
+  const incIds = new Set(inc.map(r => String(r['ID']||'').trim()));
 
-  const csatRows = rows.filter(r => r.csat_score != null && inDate(r.csat_date));
-  const cesRows  = rows.filter(r => r.ces_score  != null && inDate(r.ces_date));
-  set('k-csat', csatRows.length ? avg(csatRows,'csat_score').toFixed(2) : '—');
-  set('k-ces',  cesRows.length  ? avg(cesRows, 'ces_score').toFixed(2)  : '—');
+  // Each sheet filtered by date + matching incoming IDs (for dimension filters)
+  const hasDimFilter = f.module||f.geo||f.contract||f.account||f.severity||f.agent||f.manager;
+  const res  = filterById(sheets.resolved,   hasDimFilter ? incIds : null, f);
+  const irt  = filterById(sheets.irtSla,     hasDimFilter ? incIds : null, f);
+  const csatF= filterById(sheets.csat,       hasDimFilter ? incIds : null, f);
+  const cesF = filterById(sheets.ces,        hasDimFilter ? incIds : null, f);
+  const rop  = filterById(sheets.reopen,     hasDimFilter ? incIds : null, f);
+  const esc  = filterById(sheets.escalation, hasDimFilter ? incIds : null, f);
+  const pcvF = filterById(sheets.pcv,        hasDimFilter ? incIds : null, f);
 
-  // SLA & times — each filtered by their own sheet's date
-  const irtRows  = rows.filter(r => r.has_irt && inDate(r.irt_date));
-  const resRows  = rows.filter(r => r.is_resolved && inDate(r.resolved_date));
-  set('k-ir-sla',  irtRows.length ? (count(irtRows, r => r.initial_response_sla_met) / irtRows.length * 100).toFixed(1) : '—');
-  set('k-res-sla', resRows.length ? (count(resRows, r => r.resolution_sla_met) / resRows.length * 100).toFixed(1) : '—');
+  set('k-created',  inc.length);
+  set('k-resolved', res.length);
+  set('k-reopened', rop.length);
+  set('k-escalated',esc.length);
+  set('k-open',     Math.max(0, inc.length - res.length - rop.length - esc.length));
 
-  const irtTimeRows = irtRows.filter(r => r.initial_response_time != null);
-  const artRows     = resRows.filter(r => r.resolution_time != null);
-  set('k-irt', irtTimeRows.length ? avg(irtTimeRows,'initial_response_time').toFixed(1) : '—');
-  set('k-art', artRows.length     ? avg(artRows,'resolution_time').toFixed(1)            : '—');
+  const csatScores = csatF.map(r => toNum(r['Question Score'])).filter(v => v !== null);
+  const cesScores  = cesF.map(r => toNum(r['Question Score'])).filter(v => v !== null);
+  set('k-csat', csatScores.length ? (csatScores.reduce((a,b)=>a+b,0)/csatScores.length).toFixed(2) : '—');
+  set('k-ces',  cesScores.length  ? (cesScores.reduce((a,b)=>a+b,0)/cesScores.length).toFixed(2)   : '—');
 
-  // 1BDR — BDR / total resolved (by resolved date)
-  set('k-1bdr', resRows.length ? (count(resRows, r => r.is_1bdr === 'BDR') / resRows.length * 100).toFixed(1) : '—');
-  set('k-pcv',  count(rows, r => r.is_pcv));
+  const irSlaCount = irt.filter(r => r['First Response Status'] === 'Within SLA').length;
+  set('k-ir-sla', irt.length ? (irSlaCount / irt.length * 100).toFixed(1) : '—');
 
-  const escalPct = n ? (count(rows, r => r.is_escalated) / n * 100) : 0;
+  const resSlaCount = res.filter(r => r['Resolution Status'] === 'Within SLA').length;
+  set('k-res-sla', res.length ? (resSlaCount / res.length * 100).toFixed(1) : '—');
 
+  const irtTimes = irt.map(r => toNum(r['First Response Time in Bhrs(Hours)'])).filter(v => v !== null);
+  set('k-irt', irtTimes.length ? (irtTimes.reduce((a,b)=>a+b,0)/irtTimes.length).toFixed(1) : '—');
+
+  const artTimes = res.map(r => toNum(r['Resolution Time in Bhrs(Hours)'])).filter(v => v !== null);
+  set('k-art', artTimes.length ? (artTimes.reduce((a,b)=>a+b,0)/artTimes.length).toFixed(1) : '—');
+
+  const bdrCount = res.filter(r => r['1 BDR'] === 'BDR').length;
+  set('k-1bdr', res.length ? (bdrCount / res.length * 100).toFixed(1) : '—');
+
+  set('k-pcv', pcvF.length);
+
+  const escalPct = inc.length ? (esc.length / inc.length * 100) : 0;
   colorKpi('k-csat',     parseFloat(document.getElementById('k-csat').textContent),     v => v >= 4.7 ? 'good' : 'bad');
   colorKpi('k-ces',      parseFloat(document.getElementById('k-ces').textContent),      v => v <= 4.5 ? 'good' : 'bad');
   colorKpi('k-ir-sla',   parseFloat(document.getElementById('k-ir-sla').textContent),   v => v >= 99  ? 'good' : 'bad');
@@ -317,108 +332,85 @@ function render(rows) {
   colorKpi('k-1bdr',     parseFloat(document.getElementById('k-1bdr').textContent),     v => v >= 30  ? 'good' : 'bad');
   colorKpi('k-escalated',escalPct, v => v <= 1 ? 'good' : 'bad');
 
-  renderCharts(rows);
+  renderCharts(inc, res, irt, csatF, cesF);
 }
 
 // ── CHARTS ────────────────────────────────────────────────────────────────────
-function renderCharts(rows) {
+function renderCharts(inc, res, irt, csatF, cesF) {
   const mode   = document.querySelector('input[name="trend"]:checked').value;
-  const groups = mode === 'week' ? groupByWeek(rows) : groupByMonth(rows);
-  const labels = Object.keys(groups).sort();
-  const wData  = labels.map(w => groups[w]);
+  const grp    = mode === 'week' ? groupByWeek : groupByMonth;
+  const labels = [...new Set([...Object.keys(grp(inc)), ...Object.keys(grp(res))])].sort();
+
+  const incG  = grp(inc);
+  const resG  = grp(res);
+  const irtG  = grp(irt);
+  const csatG = grp(csatF);
+  const cesG  = grp(cesF);
 
   drawChart('chart-volume','bar', labels,[
-    {label:'Created', data:wData.map(r=>r.length), backgroundColor:'#818cf8'},
-    {label:'Resolved',data:wData.map(r=>count(r,x=>x.is_resolved)), backgroundColor:'#34d399'}
+    {label:'Created', data:labels.map(l=>(incG[l]||[]).length), backgroundColor:'#818cf8'},
+    {label:'Resolved',data:labels.map(l=>(resG[l]||[]).length), backgroundColor:'#34d399'}
   ]);
   drawChart('chart-scores','line',labels,[
-    {label:'CSAT',data:wData.map(r=>{const v=r.filter(x=>x.csat_score!=null);return v.length?+avg(v,'csat_score').toFixed(2):null;}),borderColor:'#f59e0b',tension:0.3,fill:false},
-    {label:'CES', data:wData.map(r=>{const v=r.filter(x=>x.ces_score!=null); return v.length?+avg(v,'ces_score').toFixed(2):null;}), borderColor:'#6366f1',tension:0.3,fill:false}
+    {label:'CSAT',data:labels.map(l=>{const v=(csatG[l]||[]).map(r=>toNum(r['Question Score'])).filter(x=>x!==null);return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(2):null;}),borderColor:'#f59e0b',tension:0.3,fill:false},
+    {label:'CES', data:labels.map(l=>{const v=(cesG[l]||[]).map(r=>toNum(r['Question Score'])).filter(x=>x!==null); return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(2):null;}),borderColor:'#6366f1',tension:0.3,fill:false}
   ]);
   drawChart('chart-sla','line',labels,[
-    {label:'IR SLA %', data:wData.map(r=>+pct(r,x=>x.initial_response_sla_met)),borderColor:'#10b981',tension:0.3,fill:false},
-    {label:'Res SLA %',data:wData.map(r=>+pct(r,x=>x.resolution_sla_met)),     borderColor:'#3b82f6',tension:0.3,fill:false}
+    {label:'IR SLA %', data:labels.map(l=>{const r=irtG[l]||[];return r.length?(r.filter(x=>x['First Response Status']==='Within SLA').length/r.length*100).toFixed(1):null;}),borderColor:'#10b981',tension:0.3,fill:false},
+    {label:'Res SLA %',data:labels.map(l=>{const r=resG[l]||[]; return r.length?(r.filter(x=>x['Resolution Status']==='Within SLA').length/r.length*100).toFixed(1):null;}),borderColor:'#3b82f6',tension:0.3,fill:false}
   ]);
-  drawChart('chart-status','doughnut',['Open','Resolved','Reopened','Escalated'],[{
-    data:[
-      count(rows,r=>!r.is_resolved&&!r.is_reopened&&!r.is_escalated),
-      count(rows,r=>r.is_resolved),
-      count(rows,r=>r.is_reopened),
-      count(rows,r=>r.is_escalated)
-    ],
+  drawChart('chart-status','doughnut',['Created','Resolved','Reopened','Escalated'],[{
+    data:[inc.length, res.length, sheets.reopen.length, sheets.escalation.length],
     backgroundColor:['#6366f1','#34d399','#f59e0b','#ef4444']
   }]);
 
-  renderAnalysis(labels, wData, mode);
+  renderAnalysis(labels, incG, resG, irtG, csatG, cesG, mode);
 }
 
-function renderAnalysis(labels, wData, mode) {
+function renderAnalysis(labels, incG, resG, irtG, csatG, cesG, mode) {
   if (labels.length < 2) { document.getElementById('analysis').innerHTML = 'Not enough data for trend analysis.'; return; }
-
   const period = mode === 'week' ? 'week' : 'month';
-  const last   = wData[wData.length - 1];
-  const prev   = wData[wData.length - 2];
+  const lastL=labels[labels.length-1], prevL=labels[labels.length-2];
+  const incL=incG[lastL]||[], incP=incG[prevL]||[];
+  const resL=resG[lastL]||[], resP=resG[prevL]||[];
+  const irtL=irtG[lastL]||[], irtP=irtG[prevL]||[];
+  const csatL=csatG[lastL]||[], csatP=csatG[prevL]||[];
+  const cesL=cesG[lastL]||[], cesP=cesG[prevL]||[];
 
-  const volLast = last.length, volPrev = prev.length;
-  const resLast = count(last, r => r.is_resolved), resPrev = count(prev, r => r.is_resolved);
-  const csatLast = avg(last.filter(r=>r.csat_score!=null),'csat_score') || 0;
-  const csatPrev = avg(prev.filter(r=>r.csat_score!=null),'csat_score') || 0;
-  const irSlaLast = +pct(last.filter(r=>r.has_irt), r=>r.initial_response_sla_met);
-  const irSlaPrev = +pct(prev.filter(r=>r.has_irt), r=>r.initial_response_sla_met);
-  const resSlaLast = +pct(last.filter(r=>r.is_resolved), r=>r.resolution_sla_met);
-  const resSlaPrev = +pct(prev.filter(r=>r.is_resolved), r=>r.resolution_sla_met);
-
-  const arrow = (a, b, higherBetter=true) => {
-    if (a === b) return '→ unchanged';
-    const up = a > b;
-    const good = higherBetter ? up : !up;
-    const icon = up ? '▲' : '▼';
-    const color = good ? '#16a34a' : '#dc2626';
-    return `<span style="color:${color}">${icon} ${Math.abs(((a-b)/Math.max(b,1))*100).toFixed(1)}%</span>`;
+  const avgScore=(arr,col)=>{const v=arr.map(r=>toNum(r[col])).filter(x=>x!==null);return v.length?(v.reduce((a,b)=>a+b,0)/v.length):0;};
+  const slaPct=(arr,col,val)=>arr.length?(arr.filter(r=>r[col]===val).length/arr.length*100):0;
+  const arrow=(a,b,higherBetter=true)=>{
+    if(!a&&!b)return '';
+    const up=a>b,good=higherBetter?up:!up;
+    return `<span style="color:${good?'#16a34a':'#dc2626'}">${up?'▲':'▼'} ${Math.abs(((a-b)/Math.max(b,1))*100).toFixed(1)}%</span>`;
   };
 
+  const csatL_=avgScore(csatL,'Question Score'),csatP_=avgScore(csatP,'Question Score');
+  const cesL_=avgScore(cesL,'Question Score'),cesP_=avgScore(cesP,'Question Score');
+  const irSlaL=slaPct(irtL,'First Response Status','Within SLA'),irSlaP=slaPct(irtP,'First Response Status','Within SLA');
+  const rSlaL=slaPct(resL,'Resolution Status','Within SLA'),rSlaP=slaPct(resP,'Resolution Status','Within SLA');
+
   document.getElementById('analysis').innerHTML = `
-    <strong>Last ${period} vs previous ${period}:</strong><br><br>
-    🎫 <b>Ticket Volume:</b> ${volLast} created (${arrow(volLast, volPrev, false)}) · ${resLast} resolved (${arrow(resLast, resPrev)})<br>
-    😊 <b>CSAT:</b> ${csatLast.toFixed(2)} ${arrow(csatLast, csatPrev)} · 
-    💪 <b>CES:</b> ${avg(last.filter(r=>r.ces_score!=null),'ces_score')?.toFixed(2) || '—'} ${arrow(avg(last.filter(r=>r.ces_score!=null),'ces_score')||0, avg(prev.filter(r=>r.ces_score!=null),'ces_score')||0, false)}<br>
-    ⏱ <b>IR SLA:</b> ${irSlaLast}% ${arrow(irSlaLast, irSlaPrev)} · 
-    ✅ <b>Resolution SLA:</b> ${resSlaLast}% ${arrow(resSlaLast, resSlaPrev)}<br><br>
-    ${volLast > volPrev * 1.1 ? '⚠️ Ticket volume is up significantly — monitor agent capacity.<br>' : ''}
-    ${csatLast < 3.5 ? '⚠️ CSAT is below 3.5 — review recent low-scoring tickets.<br>' : ''}
-    ${irSlaLast < 90 ? '⚠️ Initial Response SLA below 90% — check response time targets.<br>' : ''}
-    ${resSlaLast < 90 ? '⚠️ Resolution SLA below 90% — review escalation and resolution workflows.<br>' : ''}
-    ${resLast > volLast ? '✅ More tickets resolved than created — backlog is reducing.' : resLast < volLast * 0.8 ? '⚠️ Significantly more tickets created than resolved — backlog may be growing.' : '✅ Volume and resolution are balanced.'}
+    <strong>Last ${period} (${lastL}) vs previous (${prevL}):</strong><br><br>
+    🎫 <b>Created:</b> ${incL.length} ${arrow(incL.length,incP.length,false)} &nbsp;·&nbsp; <b>Resolved:</b> ${resL.length} ${arrow(resL.length,resP.length)}<br>
+    😊 <b>CSAT:</b> ${csatL_.toFixed(2)} ${arrow(csatL_,csatP_)} &nbsp;·&nbsp;
+    💪 <b>CES:</b> ${cesL_.toFixed(2)} ${arrow(cesL_,cesP_,false)}<br>
+    ⏱ <b>IR SLA:</b> ${irSlaL.toFixed(1)}% ${arrow(irSlaL,irSlaP)} &nbsp;·&nbsp;
+    ✅ <b>Resolution SLA:</b> ${rSlaL.toFixed(1)}% ${arrow(rSlaL,rSlaP)}<br><br>
+    ${incL.length>incP.length*1.1?'⚠️ Ticket volume is up significantly — monitor agent capacity.<br>':''}
+    ${csatL_&&csatL_<4.7?'⚠️ CSAT is below target (4.7).<br>':''}
+    ${irSlaL<99?'⚠️ Initial Response SLA below 99%.<br>':''}
+    ${rSlaL<99?'⚠️ Resolution SLA below 99%.<br>':''}
+    ${resL.length>=incL.length?'✅ Resolved ≥ Created — backlog is stable or reducing.':'⚠️ More tickets created than resolved — backlog may be growing.'}
   `;
-}
-
-function drawChart(id, type, labels, datasets) {
-  if (charts[id]) charts[id].destroy();
-  charts[id] = new Chart(document.getElementById(id), {
-    type, data:{labels,datasets},
-    options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:11}}}},
-      scales: type==='doughnut'?{}:{y:{beginAtZero:true}}}
-  });
-}
-
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-function set(id,val)       { document.getElementById(id).textContent = val; }
-function count(rows,fn)    { return rows.filter(fn).length; }
-function avg(rows,key)     { return rows.reduce((s,r)=>s+ +r[key],0)/rows.length; }
-function pct(rows,fn)      { return rows.length?(count(rows,fn)/rows.length*100).toFixed(1):'—'; }
-function setStatus(msg)    { document.getElementById('status-msg').textContent = msg; }
-
-function colorKpi(id, val, fn) {
-  if (isNaN(val)) return;
-  document.getElementById(id).closest('.kpi').className = 'kpi ' + fn(val);
 }
 
 function groupByWeek(rows) {
   return rows.reduce((acc,r) => {
-    if (!r.date) return acc;
-    const d = new Date(r.date), day = d.getDay();
-    const mon = new Date(d); mon.setDate(d.getDate()-(day===0?6:day-1));
-    const key = fmt(mon);
+    if (!r._date) return acc;
+    const d=new Date(r._date),day=d.getDay();
+    const mon=new Date(d); mon.setDate(d.getDate()-(day===0?6:day-1));
+    const key=mon.toISOString().slice(0,10);
     (acc[key]=acc[key]||[]).push(r);
     return acc;
   },{});
@@ -426,15 +418,16 @@ function groupByWeek(rows) {
 
 function groupByMonth(rows) {
   return rows.reduce((acc,r) => {
-    if (!r.date) return acc;
-    const key = r.date.slice(0,7); // YYYY-MM
+    if (!r._date) return acc;
+    const key=r._date.slice(0,7);
     (acc[key]=acc[key]||[]).push(r);
     return acc;
   },{});
 }
 
+
 // ── SAMPLE DATA ───────────────────────────────────────────────────────────────
-function sampleData() {
+function sampleSheets() {
   const modules=['Billing','HR','Payroll','Benefits','Onboarding'];
   const geos=['North America','EMEA','APAC','LATAM'];
   const contracts=['Enterprise','SMB','Starter'];
@@ -442,23 +435,23 @@ function sampleData() {
   const severities=['P1','P2','P3','P4'];
   const agents=['Alice','Bob','Carol','David','Eva'];
   const managers=['Manager A','Manager B','Manager C'];
-  return Array.from({length:120},(_,i)=>{
-    const d=new Date(); d.setDate(d.getDate()-Math.floor(Math.random()*60));
-    const isResolved=Math.random()>0.3, isReopened=!isResolved&&Math.random()>0.7, isEscalated=!isResolved&&Math.random()>0.8;
-    return {
-      id:`TKT-${String(i+1).padStart(3,'0')}`, date:fmt(d),
-      module:modules[i%modules.length], company_geography:geos[i%geos.length],
-      company_contract_type:contracts[i%contracts.length], account_name:accounts[i%accounts.length],
-      severity:severities[i%severities.length], agent_name:agents[i%agents.length], manager_name:managers[i%managers.length],
-      is_resolved:isResolved, is_reopened:isReopened, is_escalated:isEscalated,
-      csat_score:Math.random()>0.2?+(Math.random()*2+3).toFixed(1):null,
-      ces_score: Math.random()>0.2?+(Math.random()*4+1).toFixed(1):null,
-      initial_response_time:+(Math.random()*4+0.1).toFixed(2),
-      resolution_time:+(Math.random()*20+1).toFixed(2),
-      initial_response_sla_met:Math.random()>0.15, resolution_sla_met:Math.random()>0.2,
-      is_1bdr:isResolved&&Math.random()>0.35?'Yes':null, is_pcv:Math.random()>0.4
-    };
-  });
+  const d = (offset) => { const x=new Date(); x.setDate(x.getDate()-offset); return x.toISOString().slice(0,10); };
+
+  const incoming=[], resolved=[], reopen=[], escalation=[], csat=[], ces=[], irtSla=[], pcv=[];
+  for(let i=0;i<120;i++){
+    const id=`TKT-${String(i+1).padStart(3,'0')}`;
+    const date=d(Math.floor(Math.random()*60));
+    const dims={ID:id,Date:date,Module:modules[i%modules.length],'Company Geography':geos[i%geos.length],'Company Contract Type':contracts[i%contracts.length],'Company Name':accounts[i%accounts.length],Severity:severities[i%severities.length],'Agent Name':agents[i%agents.length],'Agent Reporting Manager in Namely':managers[i%managers.length]};
+    incoming.push({...dims,_date:date});
+    if(Math.random()>0.3){ resolved.push({ID:id,Date:date,_date:date,'Resolution Status':Math.random()>0.05?'Within SLA':'SLA Violated','Resolution Time in Bhrs(Hours)':(Math.random()*20+1).toFixed(2),'1 BDR':Math.random()>0.35?'BDR':'Non-BDR'}); }
+    if(Math.random()>0.85){ reopen.push({ID:id,Date:date,_date:date}); }
+    if(Math.random()>0.9){ escalation.push({ID:id,Date:date,_date:date}); }
+    if(Math.random()>0.2){ csat.push({ID:id,Date:date,_date:date,'Question Score':(Math.random()*2+3).toFixed(1)}); }
+    if(Math.random()>0.2){ ces.push({ID:id,Date:date,_date:date,'Question Score':(Math.random()*4+1).toFixed(1)}); }
+    irtSla.push({ID:id,Date:date,_date:date,'First Response Status':Math.random()>0.05?'Within SLA':'SLA Violated','First Response Time in Bhrs(Hours)':(Math.random()*4+0.1).toFixed(2)});
+    if(Math.random()>0.4){ pcv.push({ID:id,Date:date,_date:date}); }
+  }
+  return {incoming,resolved,reopen,escalation,csat,ces,irtSla,pcv};
 }
 </script>
 </body>
