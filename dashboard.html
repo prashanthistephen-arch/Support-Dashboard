@@ -199,8 +199,11 @@ async function loadData() {
         is_1bdr:                  resRow['1 BDR'] || null,
         resolution_sla_met:       resRow['Resolution Status'] === 'Within SLA',
         resolution_time:          toNum(resRow['Resolution Time in Bhrs(Hours)']),
+        resolved_date:            fmtDate(resRow['Date']),
+        has_irt:                  !!irtRow['ID'],
         initial_response_time:    toNum(irtRow['First Response Time in Bhrs(Hours)']),
         initial_response_sla_met: irtRow['First Response Status'] === 'Within SLA',
+        irt_date:                 fmtDate(irtRow['Date']),
         is_pcv:                   pcvIds.has(id)
       };
     });
@@ -272,15 +275,23 @@ function render(rows) {
   set('k-csat', csatRows.length ? avg(csatRows,'csat_score').toFixed(2) : '—');
   set('k-ces',  cesRows.length  ? avg(cesRows, 'ces_score').toFixed(2)  : '—');
 
-  set('k-ir-sla',  pct(rows, r => r.initial_response_sla_met));
-  set('k-res-sla', pct(rows, r => r.resolution_sla_met));
+  // SLA & times — each filtered by their own sheet's date
+  const from = document.getElementById('from-date').value;
+  const to   = document.getElementById('to-date').value;
+  const inDate = (d) => (!from || d >= from) && (!to || d <= to);
 
-  const irtRows = rows.filter(r => r.initial_response_time != null);
-  const artRows = rows.filter(r => r.resolution_time != null);
-  set('k-irt', irtRows.length ? avg(irtRows,'initial_response_time').toFixed(1) : '—');
-  set('k-art', artRows.length ? avg(artRows,'resolution_time').toFixed(1)       : '—');
+  const irtRows  = rows.filter(r => r.has_irt && inDate(r.irt_date));
+  const resRows  = rows.filter(r => r.is_resolved && inDate(r.resolved_date));
+  set('k-ir-sla',  irtRows.length ? (count(irtRows, r => r.initial_response_sla_met) / irtRows.length * 100).toFixed(1) : '—');
+  set('k-res-sla', resRows.length ? (count(resRows, r => r.resolution_sla_met) / resRows.length * 100).toFixed(1) : '—');
 
-  set('k-1bdr', pct(rows, r => r.is_1bdr && r.is_1bdr !== ''));
+  const irtTimeRows = irtRows.filter(r => r.initial_response_time != null);
+  const artRows     = resRows.filter(r => r.resolution_time != null);
+  set('k-irt', irtTimeRows.length ? avg(irtTimeRows,'initial_response_time').toFixed(1) : '—');
+  set('k-art', artRows.length     ? avg(artRows,'resolution_time').toFixed(1)            : '—');
+
+  // 1BDR — BDR / total resolved (by resolved date)
+  set('k-1bdr', resRows.length ? (count(resRows, r => r.is_1bdr === 'BDR') / resRows.length * 100).toFixed(1) : '—');
   set('k-pcv',  count(rows, r => r.is_pcv));
 
   colorKpi('k-csat',    parseFloat(document.getElementById('k-csat').textContent),    v => v>=4.5?'good':v>=3.5?'warn':'bad');
