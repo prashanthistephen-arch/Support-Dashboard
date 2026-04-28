@@ -119,10 +119,11 @@ let charts  = {};
 // ── INIT ─────────────────────────────────────────────────────────────────────
 (function init() {
   const today = new Date();
-  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  document.getElementById('from-date').value = fmt(firstOfMonth);
+  const firstOfYear = new Date(today.getFullYear(), 0, 1);
+  document.getElementById('from-date').value = fmt(firstOfYear);
   document.getElementById('to-date').value   = fmt(today);
   loadData();
+  setInterval(loadData, 60 * 60 * 1000); // auto-refresh every 1 hour
 })();
 
 function fmt(d) { return d.toISOString().slice(0, 10); }
@@ -196,10 +197,10 @@ async function loadData() {
         csat_score:               toNum(csatRow['Question Score']),
         ces_score:                toNum(cesRow['Question Score']),
         is_1bdr:                  resRow['1 BDR'] || null,
-        resolution_sla_met:       resRow['Resolution Status'] === 'Closed within SLA',
+        resolution_sla_met:       resRow['Resolution Status'] === 'Within SLA',
         resolution_time:          toNum(resRow['Resolution Time in Bhrs(Hours)']),
         initial_response_time:    toNum(irtRow['First Response Time in Bhrs(Hours)']),
-        initial_response_sla_met: irtRow['First Response Status'] === 'Responded within SLA',
+        initial_response_sla_met: irtRow['First Response Status'] === 'Within SLA',
         is_pcv:                   pcvIds.has(id)
       };
     });
