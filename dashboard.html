@@ -65,22 +65,22 @@
   <div class="kpi neutral"><div class="label">Resolved</div><div class="value" id="k-resolved">—</div></div>
   <div class="kpi neutral"><div class="label">Open</div><div class="value" id="k-open">—</div></div>
   <div class="kpi neutral"><div class="label">Reopened</div><div class="value" id="k-reopened">—</div></div>
-  <div class="kpi neutral"><div class="label">Escalated</div><div class="value" id="k-escalated">—</div></div>
+  <div class="kpi neutral"><div class="label">Escalated</div><div class="value" id="k-escalated">—</div><div class="sub">target ≤ 1% of incoming</div></div>
 </div>
 
 <div class="section-title">Satisfaction & Effort</div>
 <div class="kpi-grid">
-  <div class="kpi neutral"><div class="label">CSAT</div><div class="value" id="k-csat">—</div><div class="sub">avg Question Score</div></div>
-  <div class="kpi neutral"><div class="label">CES</div><div class="value" id="k-ces">—</div><div class="sub">avg Question Score (lower = better)</div></div>
+  <div class="kpi neutral"><div class="label">CSAT</div><div class="value" id="k-csat">—</div><div class="sub">target ≥ 4.7</div></div>
+  <div class="kpi neutral"><div class="label">CES</div><div class="value" id="k-ces">—</div><div class="sub">target ≤ 4.5 (lower = better)</div></div>
 </div>
 
 <div class="section-title">SLA & Response</div>
 <div class="kpi-grid">
-  <div class="kpi neutral"><div class="label">Initial Response SLA</div><div class="value" id="k-ir-sla">—</div><div class="sub">% met</div></div>
-  <div class="kpi neutral"><div class="label">Resolution SLA</div><div class="value" id="k-res-sla">—</div><div class="sub">% met</div></div>
+  <div class="kpi neutral"><div class="label">Initial Response SLA</div><div class="value" id="k-ir-sla">—</div><div class="sub">target ≥ 99%</div></div>
+  <div class="kpi neutral"><div class="label">Resolution SLA</div><div class="value" id="k-res-sla">—</div><div class="sub">target ≥ 99%</div></div>
   <div class="kpi neutral"><div class="label">Avg Initial Response</div><div class="value" id="k-irt">—</div><div class="sub">business hours</div></div>
-  <div class="kpi neutral"><div class="label">Avg Resolution Time</div><div class="value" id="k-art">—</div><div class="sub">business hours</div></div>
-  <div class="kpi neutral"><div class="label">1BDR Rate</div><div class="value" id="k-1bdr">—</div><div class="sub">% closed in 1 BDR</div></div>
+  <div class="kpi neutral"><div class="label">Avg Resolution Time</div><div class="value" id="k-art">—</div><div class="sub">target ≤ 120 hrs</div></div>
+  <div class="kpi neutral"><div class="label">1BDR Rate</div><div class="value" id="k-1bdr">—</div><div class="sub">target ≥ 30%</div></div>
 </div>
 
 <div class="section-title">PCV</div>
@@ -88,12 +88,23 @@
   <div class="kpi neutral"><div class="label">PCV Tickets</div><div class="value" id="k-pcv">—</div><div class="sub">tickets with PCV data</div></div>
 </div>
 
-<div class="section-title">Trends</div>
+<div class="section-title">
+  Trends
+  <span style="float:right; font-size:0.75rem; font-weight:400; text-transform:none; letter-spacing:0;">
+    <label style="cursor:pointer"><input type="radio" name="trend" value="week" checked onchange="render(filter(allRows))"> Weekly</label>
+    <label style="cursor:pointer; margin-left:12px"><input type="radio" name="trend" value="month" onchange="render(filter(allRows))"> Monthly</label>
+  </span>
+</div>
 <div class="charts-grid">
-  <div class="chart-card"><h3>Tickets Created vs Resolved (by week)</h3><canvas id="chart-volume"></canvas></div>
-  <div class="chart-card"><h3>CSAT & CES Trend (by week)</h3><canvas id="chart-scores"></canvas></div>
-  <div class="chart-card"><h3>SLA Compliance % (by week)</h3><canvas id="chart-sla"></canvas></div>
+  <div class="chart-card"><h3>Tickets Created vs Resolved</h3><canvas id="chart-volume"></canvas></div>
+  <div class="chart-card"><h3>CSAT & CES Trend</h3><canvas id="chart-scores"></canvas></div>
+  <div class="chart-card"><h3>SLA Compliance %</h3><canvas id="chart-sla"></canvas></div>
   <div class="chart-card"><h3>Status Breakdown</h3><canvas id="chart-status"></canvas></div>
+</div>
+
+<div class="section-title">Trend Analysis</div>
+<div style="padding:0 24px 24px; background:#fff; margin:0 24px 24px; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.07);">
+  <div id="analysis" style="padding:16px; font-size:0.85rem; line-height:1.6; color:#555;"></div>
 </div>
 
 <script>
@@ -195,7 +206,9 @@ async function loadData() {
         is_reopened:              reopenIds.has(id),
         is_escalated:             escalationIds.has(id),
         csat_score:               toNum(csatRow['Question Score']),
+        csat_date:                fmtDate(csatRow['Date']),
         ces_score:                toNum(cesRow['Question Score']),
+        ces_date:                 fmtDate(cesRow['Date']),
         is_1bdr:                  resRow['1 BDR'] || null,
         resolution_sla_met:       resRow['Resolution Status'] === 'Within SLA',
         resolution_time:          toNum(resRow['Resolution Time in Bhrs(Hours)']),
@@ -264,22 +277,22 @@ function filter(rows) {
 // ── RENDER ────────────────────────────────────────────────────────────────────
 function render(rows) {
   const n = rows.length;
+  const from = document.getElementById('from-date').value;
+  const to   = document.getElementById('to-date').value;
+  const inDate = d => (!from || d >= from) && (!to || d <= to);
+
   set('k-created',  n);
-  set('k-resolved', count(rows, r => r.is_resolved));
+  set('k-resolved', count(rows, r => r.is_resolved && inDate(r.resolved_date)));
   set('k-open',     count(rows, r => !r.is_resolved && !r.is_reopened && !r.is_escalated));
   set('k-reopened', count(rows, r => r.is_reopened));
   set('k-escalated',count(rows, r => r.is_escalated));
 
-  const csatRows = rows.filter(r => r.csat_score != null);
-  const cesRows  = rows.filter(r => r.ces_score  != null);
+  const csatRows = rows.filter(r => r.csat_score != null && inDate(r.csat_date));
+  const cesRows  = rows.filter(r => r.ces_score  != null && inDate(r.ces_date));
   set('k-csat', csatRows.length ? avg(csatRows,'csat_score').toFixed(2) : '—');
   set('k-ces',  cesRows.length  ? avg(cesRows, 'ces_score').toFixed(2)  : '—');
 
   // SLA & times — each filtered by their own sheet's date
-  const from = document.getElementById('from-date').value;
-  const to   = document.getElementById('to-date').value;
-  const inDate = (d) => (!from || d >= from) && (!to || d <= to);
-
   const irtRows  = rows.filter(r => r.has_irt && inDate(r.irt_date));
   const resRows  = rows.filter(r => r.is_resolved && inDate(r.resolved_date));
   set('k-ir-sla',  irtRows.length ? (count(irtRows, r => r.initial_response_sla_met) / irtRows.length * 100).toFixed(1) : '—');
@@ -294,20 +307,25 @@ function render(rows) {
   set('k-1bdr', resRows.length ? (count(resRows, r => r.is_1bdr === 'BDR') / resRows.length * 100).toFixed(1) : '—');
   set('k-pcv',  count(rows, r => r.is_pcv));
 
-  colorKpi('k-csat',    parseFloat(document.getElementById('k-csat').textContent),    v => v>=4.5?'good':v>=3.5?'warn':'bad');
-  colorKpi('k-ces',     parseFloat(document.getElementById('k-ces').textContent),     v => v<=3?'good':v<=5?'warn':'bad');
-  colorKpi('k-ir-sla',  parseFloat(document.getElementById('k-ir-sla').textContent),  v => v>=90?'good':v>=75?'warn':'bad');
-  colorKpi('k-res-sla', parseFloat(document.getElementById('k-res-sla').textContent), v => v>=90?'good':v>=75?'warn':'bad');
-  colorKpi('k-1bdr',    parseFloat(document.getElementById('k-1bdr').textContent),    v => v>=70?'good':v>=50?'warn':'bad');
+  const escalPct = n ? (count(rows, r => r.is_escalated) / n * 100) : 0;
+
+  colorKpi('k-csat',     parseFloat(document.getElementById('k-csat').textContent),     v => v >= 4.7 ? 'good' : 'bad');
+  colorKpi('k-ces',      parseFloat(document.getElementById('k-ces').textContent),      v => v <= 4.5 ? 'good' : 'bad');
+  colorKpi('k-ir-sla',   parseFloat(document.getElementById('k-ir-sla').textContent),   v => v >= 99  ? 'good' : 'bad');
+  colorKpi('k-res-sla',  parseFloat(document.getElementById('k-res-sla').textContent),  v => v >= 99  ? 'good' : 'bad');
+  colorKpi('k-art',      parseFloat(document.getElementById('k-art').textContent),      v => v <= 120 ? 'good' : 'bad');
+  colorKpi('k-1bdr',     parseFloat(document.getElementById('k-1bdr').textContent),     v => v >= 30  ? 'good' : 'bad');
+  colorKpi('k-escalated',escalPct, v => v <= 1 ? 'good' : 'bad');
 
   renderCharts(rows);
 }
 
 // ── CHARTS ────────────────────────────────────────────────────────────────────
 function renderCharts(rows) {
-  const weeks  = groupByWeek(rows);
-  const labels = Object.keys(weeks).sort();
-  const wData  = labels.map(w => weeks[w]);
+  const mode   = document.querySelector('input[name="trend"]:checked').value;
+  const groups = mode === 'week' ? groupByWeek(rows) : groupByMonth(rows);
+  const labels = Object.keys(groups).sort();
+  const wData  = labels.map(w => groups[w]);
 
   drawChart('chart-volume','bar', labels,[
     {label:'Created', data:wData.map(r=>r.length), backgroundColor:'#818cf8'},
@@ -330,6 +348,48 @@ function renderCharts(rows) {
     ],
     backgroundColor:['#6366f1','#34d399','#f59e0b','#ef4444']
   }]);
+
+  renderAnalysis(labels, wData, mode);
+}
+
+function renderAnalysis(labels, wData, mode) {
+  if (labels.length < 2) { document.getElementById('analysis').innerHTML = 'Not enough data for trend analysis.'; return; }
+
+  const period = mode === 'week' ? 'week' : 'month';
+  const last   = wData[wData.length - 1];
+  const prev   = wData[wData.length - 2];
+
+  const volLast = last.length, volPrev = prev.length;
+  const resLast = count(last, r => r.is_resolved), resPrev = count(prev, r => r.is_resolved);
+  const csatLast = avg(last.filter(r=>r.csat_score!=null),'csat_score') || 0;
+  const csatPrev = avg(prev.filter(r=>r.csat_score!=null),'csat_score') || 0;
+  const irSlaLast = +pct(last.filter(r=>r.has_irt), r=>r.initial_response_sla_met);
+  const irSlaPrev = +pct(prev.filter(r=>r.has_irt), r=>r.initial_response_sla_met);
+  const resSlaLast = +pct(last.filter(r=>r.is_resolved), r=>r.resolution_sla_met);
+  const resSlaPrev = +pct(prev.filter(r=>r.is_resolved), r=>r.resolution_sla_met);
+
+  const arrow = (a, b, higherBetter=true) => {
+    if (a === b) return '→ unchanged';
+    const up = a > b;
+    const good = higherBetter ? up : !up;
+    const icon = up ? '▲' : '▼';
+    const color = good ? '#16a34a' : '#dc2626';
+    return `<span style="color:${color}">${icon} ${Math.abs(((a-b)/Math.max(b,1))*100).toFixed(1)}%</span>`;
+  };
+
+  document.getElementById('analysis').innerHTML = `
+    <strong>Last ${period} vs previous ${period}:</strong><br><br>
+    🎫 <b>Ticket Volume:</b> ${volLast} created (${arrow(volLast, volPrev, false)}) · ${resLast} resolved (${arrow(resLast, resPrev)})<br>
+    😊 <b>CSAT:</b> ${csatLast.toFixed(2)} ${arrow(csatLast, csatPrev)} · 
+    💪 <b>CES:</b> ${avg(last.filter(r=>r.ces_score!=null),'ces_score')?.toFixed(2) || '—'} ${arrow(avg(last.filter(r=>r.ces_score!=null),'ces_score')||0, avg(prev.filter(r=>r.ces_score!=null),'ces_score')||0, false)}<br>
+    ⏱ <b>IR SLA:</b> ${irSlaLast}% ${arrow(irSlaLast, irSlaPrev)} · 
+    ✅ <b>Resolution SLA:</b> ${resSlaLast}% ${arrow(resSlaLast, resSlaPrev)}<br><br>
+    ${volLast > volPrev * 1.1 ? '⚠️ Ticket volume is up significantly — monitor agent capacity.<br>' : ''}
+    ${csatLast < 3.5 ? '⚠️ CSAT is below 3.5 — review recent low-scoring tickets.<br>' : ''}
+    ${irSlaLast < 90 ? '⚠️ Initial Response SLA below 90% — check response time targets.<br>' : ''}
+    ${resSlaLast < 90 ? '⚠️ Resolution SLA below 90% — review escalation and resolution workflows.<br>' : ''}
+    ${resLast > volLast ? '✅ More tickets resolved than created — backlog is reducing.' : resLast < volLast * 0.8 ? '⚠️ Significantly more tickets created than resolved — backlog may be growing.' : '✅ Volume and resolution are balanced.'}
+  `;
 }
 
 function drawChart(id, type, labels, datasets) {
@@ -359,6 +419,15 @@ function groupByWeek(rows) {
     const d = new Date(r.date), day = d.getDay();
     const mon = new Date(d); mon.setDate(d.getDate()-(day===0?6:day-1));
     const key = fmt(mon);
+    (acc[key]=acc[key]||[]).push(r);
+    return acc;
+  },{});
+}
+
+function groupByMonth(rows) {
+  return rows.reduce((acc,r) => {
+    if (!r.date) return acc;
+    const key = r.date.slice(0,7); // YYYY-MM
     (acc[key]=acc[key]||[]).push(r);
     return acc;
   },{});
