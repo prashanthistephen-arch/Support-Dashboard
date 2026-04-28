@@ -40,7 +40,37 @@
 </head>
 <body>
 
-<header>
+<style>
+  #auth-screen { position:fixed; inset:0; background:#1a1a2e; display:flex; align-items:center; justify-content:center; z-index:9999; }
+  #auth-box { background:#fff; border-radius:12px; padding:32px; width:320px; text-align:center; }
+  #auth-box h2 { font-size:1.1rem; margin-bottom:8px; color:#1a1a2e; }
+  #auth-box p { font-size:0.8rem; color:#888; margin-bottom:20px; }
+  #auth-box input { width:100%; border:1px solid #ccc; border-radius:6px; padding:10px; font-size:0.9rem; margin-bottom:12px; }
+  #auth-box button { width:100%; background:#4f46e5; color:#fff; border:none; border-radius:6px; padding:10px; cursor:pointer; font-size:0.9rem; }
+  #auth-error { color:#dc2626; font-size:0.8rem; margin-top:8px; display:none; }
+</style>
+<div id="auth-screen">
+  <div id="auth-box">
+    <h2>📊 Support Dashboard</h2>
+    <p>Enter password to continue</p>
+    <input type="password" id="auth-input" placeholder="Password" onkeydown="if(event.key==='Enter')checkAuth()">
+    <button onclick="checkAuth()">Login</button>
+    <div id="auth-error">Incorrect password</div>
+  </div>
+</div>
+<script>
+  (function(){
+    if(sessionStorage.getItem('auth')==='ok') document.getElementById('auth-screen').style.display='none';
+  })();
+  function checkAuth(){
+    if(document.getElementById('auth-input').value==='$upportM3trics'){
+      sessionStorage.setItem('auth','ok');
+      document.getElementById('auth-screen').style.display='none';
+    } else {
+      document.getElementById('auth-error').style.display='block';
+    }
+  }
+</script>
   <h1>📊 Support Dashboard</h1>
 </header>
 
